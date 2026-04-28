@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "47774316986",
+    "project_id": "smarthomeai-dfee4",
+    "storage_bucket": "smarthomeai-dfee4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:47774316986:android:1b7871b5e1ca86b00fc583",
+        "android_client_info": {
+          "package_name": "com.example.smarthomeai"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAg6poVVABeyQDDnjwbccYEW_YlE5lw1xo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
