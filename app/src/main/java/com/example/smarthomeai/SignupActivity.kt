@@ -16,6 +16,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,6 +31,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -89,6 +92,10 @@ fun SignupUI(
     var errorMessage by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
     var showVerificationNotice by remember { mutableStateOf(false) }
+
+    // Password visibility states
+    var passwordVisible by remember { mutableStateOf(false) }
+    var confirmPasswordVisible by remember { mutableStateOf(false) }
 
     val greenGradient = Brush.horizontalGradient(
         listOf(Color(0xFF2CF46F), Color(0xFF008F8F))
@@ -289,7 +296,7 @@ fun SignupUI(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // PASSWORD
+                // PASSWORD with eye icon
                 SectionLabel("Password")
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
@@ -297,7 +304,19 @@ fun SignupUI(
                     onValueChange = { password = it },
                     placeholder = { Text("Create password") },
                     leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                    visualTransformation = PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(
+                            onClick = { passwordVisible = !passwordVisible },
+                            enabled = !isLoading
+                        ) {
+                            Icon(
+                                if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = if (passwordVisible) "Hide password" else "Show password",
+                                tint = Color.Gray
+                            )
+                        }
+                    },
+                    visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     textStyle = fieldTextStyle,
                     shape = fieldShape,
@@ -311,12 +330,25 @@ fun SignupUI(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                // CONFIRM PASSWORD with eye icon
                 OutlinedTextField(
                     value = confirmPassword,
                     onValueChange = { confirmPassword = it },
                     placeholder = { Text("Confirm password") },
                     leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                    visualTransformation = PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(
+                            onClick = { confirmPasswordVisible = !confirmPasswordVisible },
+                            enabled = !isLoading
+                        ) {
+                            Icon(
+                                if (confirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = if (confirmPasswordVisible) "Hide password" else "Show password",
+                                tint = Color.Gray
+                            )
+                        }
+                    },
+                    visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     textStyle = fieldTextStyle,
                     shape = fieldShape,
