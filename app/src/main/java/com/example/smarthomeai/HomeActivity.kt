@@ -35,26 +35,27 @@ import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 
-// Color Palette
-val DarkBg        = Color(0xFF0F0F0F)
-val CardDark      = Color(0xFF1A1A1A)
-val CardDarker    = Color(0xFF181818)
-val Card2         = Color(0xFF222222)
-val GreenAccent   = Color(0xFFA8FF3E)
-val GreenDark     = Color(0xFF7ACC1A)
-val TextPrimary   = Color(0xFFFFFFFF)
+// ==================== Color Palette ====================
+val DarkBg = Color(0xFF0F0F0F)
+val CardDark = Color(0xFF1A1A1A)
+val CardDarker = Color(0xFF181818)
+val Card2 = Color(0xFF222222)
+val GreenAccent = Color(0xFFA8FF3E)
+val GreenDark = Color(0xFF7ACC1A)
+val TextPrimary = Color(0xFFFFFFFF)
 val TextSecondary = Color(0xFF888888)
-val ChipBg        = Color(0xFF2A2A2A)
-val EmergencyRed  = Color(0xFFFF4444)
-val IslamicTeal   = Color(0xFF14B8A6)
-val YellowAccent  = Color(0xFFFFB800)
-val BlueAccent    = Color(0xFF3B9BFF)
-val PurpleAccent  = Color(0xFFA855F7)
-val SectionLine   = Color(0xFF2A2A2A)
+val ChipBg = Color(0xFF2A2A2A)
+val EmergencyRed = Color(0xFFFF4444)
+val IslamicTeal = Color(0xFF14B8A6)
+val YellowAccent = Color(0xFFFFB800)
+val BlueAccent = Color(0xFF3B9BFF)
+val PurpleAccent = Color(0xFFA855F7)
+val SectionLine = Color(0xFF2A2A2A)
 
 class HomeActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -90,31 +91,69 @@ fun HomeScreen() {
     val currentUser = auth.currentUser
     val coroutineScope = rememberCoroutineScope()
     val databaseRef = FirebaseDatabase.getInstance().getReference("users")
+    val firestore = FirebaseFirestore.getInstance()
 
-    val userName = remember(currentUser) {
-        currentUser?.displayName?.takeIf { it.isNotBlank() }
-            ?: currentUser?.email?.split("@")?.first()
-                ?.replace(".", " ")
-                ?.split(" ")
-                ?.joinToString(" ") { it.replaceFirstChar(Char::uppercase) }
-            ?: "Smart User"
-    }
+    var userDisplayName by remember { mutableStateOf("Smart User") }
+    var firstName by remember { mutableStateOf("") }
+    var lastName by remember { mutableStateOf("") }
 
-    // Profile image state
     var profileImageBase64 by remember { mutableStateOf<String?>(null) }
     var profileBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    // Device states
     var lampOn by remember { mutableStateOf(false) }
     var fanOn by remember { mutableStateOf(false) }
     var acOn by remember { mutableStateOf(false) }
     var cctvOn by remember { mutableStateOf(false) }
 
-    // Temperature state
     var currentTemperature by remember { mutableStateOf(28.5f) }
     var isLoadingTemp by remember { mutableStateOf(false) }
 
     var showLogoutDialog by remember { mutableStateOf(false) }
+
+    // Load user data
+    fun loadUserData() {
+        val userId = currentUser?.uid ?: return
+
+        databaseRef.child(userId).addListenerForSingleValueEvent(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val rtdbFirstName = snapshot.child("firstName").getValue(String::class.java) ?: ""
+                val rtdbLastName = snapshot.child("lastName").getValue(String::class.java) ?: ""
+                val rtdbDisplayName = snapshot.child("displayName").getValue(String::class.java) ?: ""
+
+                if (rtdbFirstName.isNotBlank() || rtdbLastName.isNotBlank()) {
+                    firstName = rtdbFirstName
+                    lastName = rtdbLastName
+                    userDisplayName = "$rtdbFirstName $rtdbLastName".trim()
+                } else if (rtdbDisplayName.isNotBlank()) {
+                    userDisplayName = rtdbDisplayName
+                } else {
+                    currentUser.displayName?.let {
+                        userDisplayName = it
+                    }
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                currentUser.displayName?.let {
+                    userDisplayName = it
+                }
+            }
+        })
+
+        // Backup from Firestore
+        firestore.collection("users").document(userId).get()
+            .addOnSuccessListener { document ->
+                if (document.exists()) {
+                    val fsFirstName = document.getString("firstName") ?: ""
+                    val fsLastName = document.getString("lastName") ?: ""
+                    if (fsFirstName.isNotBlank() || fsLastName.isNotBlank()) {
+                        firstName = fsFirstName
+                        lastName = fsLastName
+                        userDisplayName = "$fsFirstName $fsLastName".trim()
+                    }
+                }
+            }
+    }
 
     // Real-time listener for profile image
     DisposableEffect(Unit) {
@@ -131,12 +170,11 @@ fun HomeScreen() {
                 }
             }
 
-            override fun onCancelled(error: DatabaseError) {
-                // Handle error silently
-            }
+            override fun onCancelled(error: DatabaseError) { }
         }
 
         databaseRef.child(userId).addValueEventListener(listener)
+        loadUserData()
 
         onDispose {
             databaseRef.child(userId).removeEventListener(listener)
@@ -203,9 +241,10 @@ fun HomeScreen() {
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 16.dp)
         ) {
-            // Top Bar with Profile Image
             TopBarWithProfileImage(
-                userName = userName,
+                userDisplayName = userDisplayName,
+                firstName = firstName,
+                lastName = lastName,
                 profileBitmap = profileBitmap,
                 onProfileClick = {
                     context.startActivity(Intent(context, ProfileActivity::class.java))
@@ -258,16 +297,23 @@ fun HomeScreen() {
     }
 }
 
-// ==================== Top Bar with Profile Image (Updated) ====================
-
 @Composable
 fun TopBarWithProfileImage(
-    userName: String,
+    userDisplayName: String,
+    firstName: String,
+    lastName: String,
     profileBitmap: Bitmap?,
     onProfileClick: () -> Unit,
     onLogoutClick: () -> Unit,
     onNotifClick: () -> Unit
 ) {
+    val displayName = when {
+        firstName.isNotBlank() && lastName.isNotBlank() -> "$firstName $lastName"
+        firstName.isNotBlank() -> firstName
+        userDisplayName.isNotBlank() && userDisplayName != "Smart User" -> userDisplayName
+        else -> "Smart User"
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -275,12 +321,10 @@ fun TopBarWithProfileImage(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        // Profile Avatar with Image - Left side
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Profile Image Circle
             Box(
                 modifier = Modifier
                     .size(46.dp)
@@ -290,7 +334,6 @@ fun TopBarWithProfileImage(
                 contentAlignment = Alignment.Center
             ) {
                 if (profileBitmap != null) {
-                    // Show actual profile image
                     androidx.compose.foundation.Image(
                         bitmap = profileBitmap.asImageBitmap(),
                         contentDescription = "Profile Picture",
@@ -300,17 +343,24 @@ fun TopBarWithProfileImage(
                         contentScale = ContentScale.Crop
                     )
                 } else {
-                    // Show default person icon
-                    Icon(
-                        Icons.Default.Person,
-                        contentDescription = "Profile",
-                        tint = TextSecondary,
-                        modifier = Modifier.size(24.dp)
-                    )
+                    if (displayName.isNotBlank() && displayName != "Smart User") {
+                        Text(
+                            text = displayName.take(1).uppercase(),
+                            color = GreenAccent,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    } else {
+                        Icon(
+                            Icons.Default.Person,
+                            contentDescription = "Profile",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
             }
 
-            // User Name
             Column {
                 Text(
                     "Welcome back",
@@ -319,7 +369,7 @@ fun TopBarWithProfileImage(
                     letterSpacing = 0.5.sp
                 )
                 Text(
-                    userName,
+                    displayName,
                     color = TextPrimary,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
@@ -329,7 +379,6 @@ fun TopBarWithProfileImage(
             }
         }
 
-        // Action Buttons - Right side
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             IconCircleButton(
                 icon = Icons.Default.Logout,
@@ -362,8 +411,6 @@ fun IconCircleButton(
         Icon(icon, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(20.dp))
     }
 }
-
-// ==================== Greeting Banner ====================
 
 @Composable
 fun GreetingBanner(activeCount: Int, temperature: Float, isLoading: Boolean, isAcOn: Boolean) {
@@ -482,8 +529,6 @@ fun GreetingBanner(activeCount: Int, temperature: Float, isLoading: Boolean, isA
     }
 }
 
-// ==================== Section Helpers ====================
-
 @Composable
 fun SectionHeader(title: String, actionLabel: String? = null) {
     Row(
@@ -517,8 +562,6 @@ fun SectionDivider() {
     )
     Spacer(modifier = Modifier.height(18.dp))
 }
-
-// ==================== Quick Control ====================
 
 @Composable
 fun QuickControlSection(
@@ -618,8 +661,6 @@ fun QuickControlCard(
         }
     }
 }
-
-// ==================== Device Status ====================
 
 @Composable
 fun DeviceStatusSection(
@@ -727,8 +768,6 @@ fun DeviceStatusCard(
     }
 }
 
-// ==================== Features Section ====================
-
 @Composable
 fun FeaturesSection(context: android.content.Context) {
     Column(
@@ -809,6 +848,16 @@ fun FeaturesSection(context: android.content.Context) {
             accentColor = Color(0xFF888888),
             onClick = {
                 context.startActivity(Intent(context, ProfileActivity::class.java))
+            }
+        )
+        FeatureCard(
+            modifier = Modifier.fillMaxWidth(),
+            icon = Icons.Default.History,
+            title = "Activity Log",
+            subtitle = "Swipe to delete • Firestore",
+            accentColor = GreenAccent,
+            onClick = {
+                context.startActivity(Intent(context, ActivityLogActivity::class.java))
             }
         )
     }
