@@ -49,21 +49,20 @@ dependencies {
     // Material Icons Extended
     implementation("androidx.compose.material:material-icons-extended:1.7.5")
 
-    // Firebase Database
-    implementation("com.google.firebase:firebase-database-ktx:20.3.0")
-    dependencies {
-        implementation("io.coil-kt:coil-compose:2.6.0")
-
-
-        // Firebase Storage
-        implementation("com.google.firebase:firebase-storage-ktx")
-    }
-
-    // Firebase BOM (Bill of Materials)
+    // Firebase BOM
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
 
     // Firebase Authentication
     implementation("com.google.firebase:firebase-auth-ktx")
+
+    // Firebase Realtime Database
+    implementation("com.google.firebase:firebase-database-ktx")
+
+    // Firebase Cloud Firestore
+    implementation("com.google.firebase:firebase-firestore-ktx")
+
+    // Firebase Storage
+    implementation("com.google.firebase:firebase-storage-ktx")
 
     // Coil for image loading
     implementation("io.coil-kt:coil-compose:2.6.0")
