@@ -16,6 +16,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,6 +31,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -36,8 +39,6 @@ import androidx.compose.ui.unit.sp
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.auth.UserProfileChangeRequest
-import com.google.firebase.database.FirebaseDatabase
-import com.google.firebase.firestore.FirebaseFirestore
 
 class SignupActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,13 +60,13 @@ class SignupActivity : ComponentActivity() {
 
 @Composable
 fun signupFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedContainerColor = Color.White,
+    focusedContainerColor   = Color.White,
     unfocusedContainerColor = Color.White,
-    focusedBorderColor = Color(0xFF2CF46F),
-    unfocusedBorderColor = Color(0xFFDDDDDD),
-    focusedTextColor = Color.Black,
-    unfocusedTextColor = Color.Black,
-    cursorColor = Color(0xFF008F8F),
+    focusedBorderColor      = Color(0xFF2CF46F),
+    unfocusedBorderColor    = Color(0xFFDDDDDD),
+    focusedTextColor        = Color.Black,
+    unfocusedTextColor      = Color.Black,
+    cursorColor             = Color(0xFF008F8F),
     focusedPlaceholderColor = Color.Gray,
     unfocusedPlaceholderColor = Color.Gray,
     focusedLeadingIconColor = Color.Gray,
@@ -92,6 +93,10 @@ fun SignupUI(
     var isLoading by remember { mutableStateOf(false) }
     var showVerificationNotice by remember { mutableStateOf(false) }
 
+    // Password visibility states
+    var passwordVisible by remember { mutableStateOf(false) }
+    var confirmPasswordVisible by remember { mutableStateOf(false) }
+
     val greenGradient = Brush.horizontalGradient(
         listOf(Color(0xFF2CF46F), Color(0xFF008F8F))
     )
@@ -102,6 +107,7 @@ fun SignupUI(
             .background(Color(0xFFF5F5F5))
             .verticalScroll(rememberScrollState())
     ) {
+
         // HEADER
         Box(
             modifier = Modifier
@@ -157,6 +163,7 @@ fun SignupUI(
                 .padding(horizontal = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+
             Spacer(modifier = Modifier.height(20.dp))
 
             // Verification Notice
@@ -289,7 +296,7 @@ fun SignupUI(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // PASSWORD
+                // PASSWORD with eye icon
                 SectionLabel("Password")
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
@@ -297,7 +304,19 @@ fun SignupUI(
                     onValueChange = { password = it },
                     placeholder = { Text("Create password") },
                     leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                    visualTransformation = PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(
+                            onClick = { passwordVisible = !passwordVisible },
+                            enabled = !isLoading
+                        ) {
+                            Icon(
+                                if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = if (passwordVisible) "Hide password" else "Show password",
+                                tint = Color.Gray
+                            )
+                        }
+                    },
+                    visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     textStyle = fieldTextStyle,
                     shape = fieldShape,
@@ -311,12 +330,25 @@ fun SignupUI(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                // CONFIRM PASSWORD with eye icon
                 OutlinedTextField(
                     value = confirmPassword,
                     onValueChange = { confirmPassword = it },
                     placeholder = { Text("Confirm password") },
                     leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                    visualTransformation = PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(
+                            onClick = { confirmPasswordVisible = !confirmPasswordVisible },
+                            enabled = !isLoading
+                        ) {
+                            Icon(
+                                if (confirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = if (confirmPasswordVisible) "Hide password" else "Show password",
+                                tint = Color.Gray
+                            )
+                        }
+                    },
+                    visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     textStyle = fieldTextStyle,
                     shape = fieldShape,
@@ -360,50 +392,23 @@ fun SignupUI(
 
                                 val fullName = "$firstName $lastName"
 
+                                // Email/Password Sign Up with Verification
                                 auth.createUserWithEmailAndPassword(emailInput, password)
                                     .addOnCompleteListener { task ->
                                         if (task.isSuccessful) {
                                             val user = task.result?.user
-                                            val userId = user?.uid
 
+                                            // Update display name
                                             val profileUpdates = UserProfileChangeRequest.Builder()
                                                 .setDisplayName(fullName)
                                                 .build()
 
                                             user?.updateProfile(profileUpdates)?.addOnCompleteListener { updateTask ->
-                                                // Save to Realtime Database
-                                                if (userId != null) {
-                                                    val rtdbRef = FirebaseDatabase.getInstance()
-                                                        .getReference("users")
-                                                        .child(userId)
-
-                                                    val userData = mapOf(
-                                                        "displayName" to fullName,
-                                                        "firstName" to firstName,
-                                                        "lastName" to lastName,
-                                                        "email" to emailInput,
-                                                        "createdAt" to System.currentTimeMillis()
-                                                    )
-                                                    rtdbRef.setValue(userData)
-
-                                                    // Save to Firestore
-                                                    val firestore = FirebaseFirestore.getInstance()
-                                                    val firestoreUserData = mapOf(
-                                                        "displayName" to fullName,
-                                                        "firstName" to firstName,
-                                                        "lastName" to lastName,
-                                                        "email" to emailInput,
-                                                        "createdAt" to System.currentTimeMillis(),
-                                                        "uid" to userId
-                                                    )
-                                                    firestore.collection("users")
-                                                        .document(userId)
-                                                        .set(firestoreUserData)
-                                                }
-
+                                                // Send email verification
                                                 user?.sendEmailVerification()?.addOnCompleteListener { verifyTask ->
                                                     isLoading = false
                                                     if (verifyTask.isSuccessful) {
+                                                        // Sign out because email not verified yet
                                                         auth.signOut()
                                                         showVerificationNotice = true
                                                     } else {
@@ -454,6 +459,7 @@ fun SignupUI(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
+                // TERMS
                 Text(
                     buildAnnotatedString {
                         append("By signing up you agree to our ")
@@ -472,6 +478,7 @@ fun SignupUI(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                // SIGN IN ROW
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Already have an account? ", color = Color.Gray, fontSize = 13.sp)
                     TextButton(

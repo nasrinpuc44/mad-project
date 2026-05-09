@@ -12,6 +12,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,6 +30,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.firebase.Firebase
@@ -58,6 +61,9 @@ fun LoginUI() {
     var showError by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
+
+    // Password visibility state
+    var passwordVisible by remember { mutableStateOf(false) }
 
     // Forgot Password dialog states
     var showResetDialog by remember { mutableStateOf(false) }
@@ -163,7 +169,7 @@ fun LoginUI() {
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // PASSWORD
+            // PASSWORD with eye icon
             OutlinedTextField(
                 value = password,
                 onValueChange = { password = it },
@@ -171,7 +177,19 @@ fun LoginUI() {
                 leadingIcon = {
                     Icon(Icons.Default.Lock, contentDescription = null, tint = Color.Gray)
                 },
-                visualTransformation = PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(
+                        onClick = { passwordVisible = !passwordVisible },
+                        enabled = !isLoading && !isSendingReset
+                    ) {
+                        Icon(
+                            if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                            contentDescription = if (passwordVisible) "Hide password" else "Show password",
+                            tint = Color.Gray
+                        )
+                    }
+                },
+                visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 textStyle = TextStyle(color = Color.Black, fontSize = 15.sp),
                 shape = RoundedCornerShape(50.dp),
