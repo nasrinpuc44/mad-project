@@ -36,8 +36,10 @@ import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ktx.firestore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import kotlin.random.Random
 
 // ==================== Color Palette ====================
@@ -70,7 +72,6 @@ class HomeActivity : ComponentActivity() {
     }
 }
 
-// Convert Base64 to Bitmap
 fun String.toBitmapFromBase64(): Bitmap? {
     return try {
         val bytes = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -89,9 +90,9 @@ fun HomeScreen() {
     val context = LocalContext.current
     val auth = Firebase.auth
     val currentUser = auth.currentUser
+    val firestore = FirebaseFirestore.getInstance()
     val coroutineScope = rememberCoroutineScope()
     val databaseRef = FirebaseDatabase.getInstance().getReference("users")
-    val firestore = FirebaseFirestore.getInstance()
 
     var userDisplayName by remember { mutableStateOf("Smart User") }
     var firstName by remember { mutableStateOf("") }
@@ -110,7 +111,28 @@ fun HomeScreen() {
 
     var showLogoutDialog by remember { mutableStateOf(false) }
 
-    // Load user data
+    // Unread notification count - will be updated by Firestore listener
+    var unreadCount by remember { mutableStateOf(0) }
+
+    // Setup Firestore real-time listener for unread notifications
+    DisposableEffect(Unit) {
+        val userId = currentUser?.uid ?: return@DisposableEffect onDispose {}
+
+        val listener = firestore.collection("users")
+            .document(userId)
+            .collection("notifications")
+            .whereEqualTo("isRead", false)
+            .addSnapshotListener { snapshot, error ->
+                if (error == null && snapshot != null) {
+                    unreadCount = snapshot.size()
+                }
+            }
+
+        onDispose {
+            // Listener will be automatically removed
+        }
+    }
+
     fun loadUserData() {
         val userId = currentUser?.uid ?: return
 
@@ -140,7 +162,6 @@ fun HomeScreen() {
             }
         })
 
-        // Backup from Firestore
         firestore.collection("users").document(userId).get()
             .addOnSuccessListener { document ->
                 if (document.exists()) {
@@ -155,7 +176,6 @@ fun HomeScreen() {
             }
     }
 
-    // Real-time listener for profile image
     DisposableEffect(Unit) {
         val userId = currentUser?.uid ?: return@DisposableEffect onDispose {}
 
@@ -169,7 +189,6 @@ fun HomeScreen() {
                     profileBitmap = null
                 }
             }
-
             override fun onCancelled(error: DatabaseError) { }
         }
 
@@ -191,9 +210,7 @@ fun HomeScreen() {
         }
     }
 
-    LaunchedEffect(acOn) {
-        fetchRealTemperature()
-    }
+    LaunchedEffect(acOn) { fetchRealTemperature() }
 
     LaunchedEffect(Unit) {
         while(true) {
@@ -246,6 +263,7 @@ fun HomeScreen() {
                 firstName = firstName,
                 lastName = lastName,
                 profileBitmap = profileBitmap,
+                unreadCount = unreadCount,
                 onProfileClick = {
                     context.startActivity(Intent(context, ProfileActivity::class.java))
                 },
@@ -303,6 +321,7 @@ fun TopBarWithProfileImage(
     firstName: String,
     lastName: String,
     profileBitmap: Bitmap?,
+    unreadCount: Int,
     onProfileClick: () -> Unit,
     onLogoutClick: () -> Unit,
     onNotifClick: () -> Unit
@@ -362,20 +381,8 @@ fun TopBarWithProfileImage(
             }
 
             Column {
-                Text(
-                    "Welcome back",
-                    color = TextSecondary,
-                    fontSize = 11.sp,
-                    letterSpacing = 0.5.sp
-                )
-                Text(
-                    displayName,
-                    color = TextPrimary,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Text("Welcome back", color = TextSecondary, fontSize = 11.sp, letterSpacing = 0.5.sp)
+                Text(displayName, color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
 
@@ -385,21 +392,38 @@ fun TopBarWithProfileImage(
                 onClick = onLogoutClick,
                 backgroundColor = CardDark
             )
-            IconCircleButton(
-                icon = Icons.Default.Notifications,
-                onClick = onNotifClick,
-                backgroundColor = CardDark
-            )
+
+            Box {
+                IconCircleButton(
+                    icon = Icons.Default.Notifications,
+                    onClick = onNotifClick,
+                    backgroundColor = CardDark
+                )
+                if (unreadCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = 4.dp, y = (-4).dp)
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(EmergencyRed),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (unreadCount > 99) "99+" else "$unreadCount",
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-fun IconCircleButton(
-    icon: ImageVector,
-    onClick: () -> Unit,
-    backgroundColor: Color = CardDark
-) {
+fun IconCircleButton(icon: ImageVector, onClick: () -> Unit, backgroundColor: Color = CardDark) {
     Box(
         modifier = Modifier
             .size(42.dp)
@@ -446,20 +470,8 @@ fun GreetingBanner(activeCount: Int, temperature: Float, isLoading: Boolean, isA
                     else -> "Good Evening 🌙"
                 }
                 Text(greeting, color = TextSecondary, fontSize = 12.sp)
-                Text(
-                    "Your Home,",
-                    color = TextPrimary,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    lineHeight = 26.sp
-                )
-                Text(
-                    "Smart & Safe",
-                    color = GreenAccent,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    lineHeight = 26.sp
-                )
+                Text("Your Home,", color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold, lineHeight = 26.sp)
+                Text("Smart & Safe", color = GreenAccent, fontSize = 22.sp, fontWeight = FontWeight.Bold, lineHeight = 26.sp)
             }
             Column(
                 horizontalAlignment = Alignment.End,
@@ -468,62 +480,28 @@ fun GreetingBanner(activeCount: Int, temperature: Float, isLoading: Boolean, isA
                 Surface(
                     shape = RoundedCornerShape(20.dp),
                     color = GreenAccent.copy(alpha = 0.12f),
-                    border = androidx.compose.foundation.BorderStroke(
-                        width = 1.dp,
-                        color = GreenAccent.copy(alpha = 0.3f)
-                    )
+                    border = androidx.compose.foundation.BorderStroke(width = 1.dp, color = GreenAccent.copy(alpha = 0.3f))
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(7.dp)
-                                .clip(CircleShape)
-                                .background(GreenAccent)
-                        )
-                        Text(
-                            "$activeCount Active",
-                            color = GreenAccent,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
+                        Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(GreenAccent))
+                        Text("$activeCount Active", color = GreenAccent, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     }
                 }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            color = GreenAccent,
-                            strokeWidth = 2.dp
-                        )
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = GreenAccent, strokeWidth = 2.dp)
                     } else {
-                        Icon(
-                            if (isAcOn) Icons.Default.AcUnit else Icons.Default.WbSunny,
-                            contentDescription = "Temperature",
-                            tint = if (isAcOn) BlueAccent else YellowAccent,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Icon(if (isAcOn) Icons.Default.AcUnit else Icons.Default.WbSunny, contentDescription = "Temperature", tint = if (isAcOn) BlueAccent else YellowAccent, modifier = Modifier.size(18.dp))
                     }
-                    Text(
-                        text = if (isLoading) "--°C" else String.format("%.1f°C", temperature),
-                        color = if (isAcOn) BlueAccent else YellowAccent,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text(text = if (isLoading) "--°C" else String.format("%.1f°C", temperature), color = if (isAcOn) BlueAccent else YellowAccent, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 }
 
-                Text(
-                    text = if (isAcOn) "Cooling: ${String.format("%.1f", temperature)}°C" else "Indoor Temp",
-                    color = TextSecondary,
-                    fontSize = 10.sp
-                )
+                Text(text = if (isAcOn) "Cooling: ${String.format("%.1f", temperature)}°C" else "Indoor Temp", color = TextSecondary, fontSize = 10.sp)
             }
         }
     }
@@ -532,9 +510,7 @@ fun GreetingBanner(activeCount: Int, temperature: Float, isLoading: Boolean, isA
 @Composable
 fun SectionHeader(title: String, actionLabel: String? = null) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 18.dp, vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -554,11 +530,7 @@ fun SectionDivider() {
             .padding(horizontal = 18.dp)
             .fillMaxWidth()
             .height(1.dp)
-            .background(
-                Brush.horizontalGradient(
-                    listOf(Color.Transparent, SectionLine, Color.Transparent)
-                )
-            )
+            .background(Brush.horizontalGradient(listOf(Color.Transparent, SectionLine, Color.Transparent)))
     )
     Spacer(modifier = Modifier.height(18.dp))
 }
@@ -570,43 +542,17 @@ fun QuickControlSection(
     acOn: Boolean, onAcToggle: (Boolean) -> Unit
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 18.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        QuickControlCard(
-            modifier = Modifier.weight(1f),
-            icon = Icons.Default.Lightbulb,
-            label = "Light",
-            isOn = lampOn,
-            onToggle = onLampToggle
-        )
-        QuickControlCard(
-            modifier = Modifier.weight(1f),
-            icon = Icons.Default.Air,
-            label = "Fan",
-            isOn = fanOn,
-            onToggle = onFanToggle
-        )
-        QuickControlCard(
-            modifier = Modifier.weight(1f),
-            icon = Icons.Default.AcUnit,
-            label = "AC",
-            isOn = acOn,
-            onToggle = onAcToggle
-        )
+        QuickControlCard(modifier = Modifier.weight(1f), icon = Icons.Default.Lightbulb, label = "Light", isOn = lampOn, onToggle = onLampToggle)
+        QuickControlCard(modifier = Modifier.weight(1f), icon = Icons.Default.Air, label = "Fan", isOn = fanOn, onToggle = onFanToggle)
+        QuickControlCard(modifier = Modifier.weight(1f), icon = Icons.Default.AcUnit, label = "AC", isOn = acOn, onToggle = onAcToggle)
     }
 }
 
 @Composable
-fun QuickControlCard(
-    modifier: Modifier = Modifier,
-    icon: ImageVector,
-    label: String,
-    isOn: Boolean,
-    onToggle: (Boolean) -> Unit
-) {
+fun QuickControlCard(modifier: Modifier = Modifier, icon: ImageVector, label: String, isOn: Boolean, onToggle: (Boolean) -> Unit) {
     val bgColor = if (isOn) GreenAccent.copy(alpha = 0.1f) else CardDark
     val borderColor = if (isOn) GreenAccent.copy(alpha = 0.35f) else Color(0xFF252525)
     val iconTint = if (isOn) GreenAccent else TextSecondary
@@ -618,38 +564,20 @@ fun QuickControlCard(
         colors = CardDefaults.cardColors(containerColor = bgColor),
         border = androidx.compose.foundation.BorderStroke(1.dp, borderColor)
     ) {
-        if (isOn) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(2.dp)
-                    .background(GreenAccent)
-            )
-        }
+        if (isOn) { Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(GreenAccent)) }
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .clickable { onToggle(!isOn) }
-                .padding(10.dp),
+            modifier = Modifier.fillMaxSize().clickable { onToggle(!isOn) }.padding(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceEvenly
         ) {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(iconBg),
-                contentAlignment = Alignment.Center
-            ) {
+            Box(modifier = Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(iconBg), contentAlignment = Alignment.Center) {
                 Icon(icon, contentDescription = label, tint = iconTint, modifier = Modifier.size(20.dp))
             }
             Text(label, color = iconTint, fontSize = 11.sp, fontWeight = FontWeight.Medium)
             Switch(
                 checked = isOn,
                 onCheckedChange = onToggle,
-                modifier = Modifier
-                    .height(20.dp)
-                    .width(38.dp),
+                modifier = Modifier.height(20.dp).width(38.dp),
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = Color.Black,
                     checkedTrackColor = GreenAccent,
@@ -669,53 +597,20 @@ fun DeviceStatusSection(
     acOn: Boolean, onAcToggle: (Boolean) -> Unit,
     cctvOn: Boolean, onCctvToggle: (Boolean) -> Unit
 ) {
-    Column(
-        modifier = Modifier.padding(horizontal = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
+    Column(modifier = Modifier.padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            DeviceStatusCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.Lightbulb,
-                title = "Smart Light",
-                isOn = lampOn,
-                onToggle = onLampToggle
-            )
-            DeviceStatusCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.Air,
-                title = "Smart Fan",
-                isOn = fanOn,
-                onToggle = onFanToggle
-            )
+            DeviceStatusCard(modifier = Modifier.weight(1f), icon = Icons.Default.Lightbulb, title = "Smart Light", isOn = lampOn, onToggle = onLampToggle)
+            DeviceStatusCard(modifier = Modifier.weight(1f), icon = Icons.Default.Air, title = "Smart Fan", isOn = fanOn, onToggle = onFanToggle)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            DeviceStatusCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.AcUnit,
-                title = "Air Cond.",
-                isOn = acOn,
-                onToggle = onAcToggle
-            )
-            DeviceStatusCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.Videocam,
-                title = "CCTV",
-                isOn = cctvOn,
-                onToggle = onCctvToggle
-            )
+            DeviceStatusCard(modifier = Modifier.weight(1f), icon = Icons.Default.AcUnit, title = "Air Cond.", isOn = acOn, onToggle = onAcToggle)
+            DeviceStatusCard(modifier = Modifier.weight(1f), icon = Icons.Default.Videocam, title = "CCTV", isOn = cctvOn, onToggle = onCctvToggle)
         }
     }
 }
 
 @Composable
-fun DeviceStatusCard(
-    modifier: Modifier = Modifier,
-    icon: ImageVector,
-    title: String,
-    isOn: Boolean,
-    onToggle: (Boolean) -> Unit
-) {
+fun DeviceStatusCard(modifier: Modifier = Modifier, icon: ImageVector, title: String, isOn: Boolean, onToggle: (Boolean) -> Unit) {
     val iconBg = if (isOn) GreenAccent.copy(alpha = 0.15f) else Color(0xFF252525)
     val iconTint = if (isOn) GreenAccent else Color(0xFF555555)
 
@@ -726,30 +621,17 @@ fun DeviceStatusCard(
         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF252525))
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(iconBg),
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(iconBg), contentAlignment = Alignment.Center) {
                     Icon(icon, contentDescription = title, tint = iconTint, modifier = Modifier.size(18.dp))
                 }
                 Column {
                     Text(title, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                    Text(
-                        if (isOn) "● ON" else "○ OFF",
-                        color = if (isOn) GreenAccent else Color(0xFF555555),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Text(if (isOn) "● ON" else "○ OFF", color = if (isOn) GreenAccent else Color(0xFF555555), fontSize = 10.sp, fontWeight = FontWeight.Medium)
                 }
             }
             Switch(
@@ -770,108 +652,34 @@ fun DeviceStatusCard(
 
 @Composable
 fun FeaturesSection(context: android.content.Context) {
-    Column(
-        modifier = Modifier.padding(horizontal = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
+    Column(modifier = Modifier.padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FeatureCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.Devices,
-                title = "Device Control",
-                subtitle = "Manage all",
-                accentColor = GreenAccent,
-                onClick = {
-                    context.startActivity(Intent(context, DeviceControlActivity::class.java))
-                }
-            )
-            FeatureCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.Tune,
-                title = "Automation",
-                subtitle = "Smart rules",
-                accentColor = BlueAccent,
-                onClick = {
-                    context.startActivity(Intent(context, AutomationActivity::class.java))
-                }
-            )
+            FeatureCard(modifier = Modifier.weight(1f), icon = Icons.Default.Devices, title = "Device Control", subtitle = "Manage all", accentColor = GreenAccent,
+                onClick = { context.startActivity(Intent(context, DeviceControlActivity::class.java)) })
+            FeatureCard(modifier = Modifier.weight(1f), icon = Icons.Default.Tune, title = "Automation", subtitle = "Smart rules", accentColor = BlueAccent,
+                onClick = { context.startActivity(Intent(context, AutomationActivity::class.java)) })
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FeatureCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.ShowChart,
-                title = "Energy",
-                subtitle = "Monitor usage",
-                accentColor = YellowAccent,
-                onClick = {
-                    context.startActivity(Intent(context, EnergyActivity::class.java))
-                }
-            )
-            FeatureCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.Warning,
-                title = "Emergency",
-                subtitle = "SOS & alerts",
-                accentColor = EmergencyRed,
-                onClick = {
-                    context.startActivity(Intent(context, EmergencyActivity::class.java))
-                }
-            )
+            FeatureCard(modifier = Modifier.weight(1f), icon = Icons.Default.ShowChart, title = "Energy", subtitle = "Monitor usage", accentColor = YellowAccent,
+                onClick = { context.startActivity(Intent(context, EnergyActivity::class.java)) })
+            FeatureCard(modifier = Modifier.weight(1f), icon = Icons.Default.Warning, title = "Emergency", subtitle = "SOS & alerts", accentColor = EmergencyRed,
+                onClick = { context.startActivity(Intent(context, EmergencyActivity::class.java)) })
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FeatureCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.Mosque,
-                title = "Islamic",
-                subtitle = "Prayer & Quran",
-                accentColor = IslamicTeal,
-                onClick = {
-                    context.startActivity(Intent(context, IslamicFeatureActivity::class.java))
-                }
-            )
-            FeatureCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.Notifications,
-                title = "Notifications",
-                subtitle = "All alerts",
-                accentColor = PurpleAccent,
-                onClick = {
-                    context.startActivity(Intent(context, NotificationActivity::class.java))
-                }
-            )
+            FeatureCard(modifier = Modifier.weight(1f), icon = Icons.Default.Mosque, title = "Islamic", subtitle = "Prayer & Quran", accentColor = IslamicTeal,
+                onClick = { context.startActivity(Intent(context, IslamicFeatureActivity::class.java)) })
+            FeatureCard(modifier = Modifier.weight(1f), icon = Icons.Default.Notifications, title = "Notifications", subtitle = "All alerts", accentColor = PurpleAccent,
+                onClick = { context.startActivity(Intent(context, NotificationActivity::class.java)) })
         }
-        FeatureCard(
-            modifier = Modifier.fillMaxWidth(),
-            icon = Icons.Default.Person,
-            title = "Profile Settings",
-            subtitle = "Account & preferences",
-            accentColor = Color(0xFF888888),
-            onClick = {
-                context.startActivity(Intent(context, ProfileActivity::class.java))
-            }
-        )
-        FeatureCard(
-            modifier = Modifier.fillMaxWidth(),
-            icon = Icons.Default.History,
-            title = "Activity Log",
-            subtitle = "Swipe to delete • Firestore",
-            accentColor = GreenAccent,
-            onClick = {
-                context.startActivity(Intent(context, ActivityLogActivity::class.java))
-            }
-        )
+        FeatureCard(modifier = Modifier.fillMaxWidth(), icon = Icons.Default.Person, title = "Profile Settings", subtitle = "Account & preferences", accentColor = Color(0xFF888888),
+            onClick = { context.startActivity(Intent(context, ProfileActivity::class.java)) })
+        FeatureCard(modifier = Modifier.fillMaxWidth(), icon = Icons.Default.History, title = "Activity Log", subtitle = "Swipe to delete • Firestore", accentColor = GreenAccent,
+            onClick = { context.startActivity(Intent(context, ActivityLogActivity::class.java)) })
     }
 }
 
 @Composable
-fun FeatureCard(
-    modifier: Modifier = Modifier,
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    accentColor: Color,
-    onClick: () -> Unit
-) {
+fun FeatureCard(modifier: Modifier = Modifier, icon: ImageVector, title: String, subtitle: String, accentColor: Color, onClick: () -> Unit) {
     Card(
         modifier = modifier.height(76.dp).clickable { onClick() },
         shape = RoundedCornerShape(16.dp),
@@ -879,23 +687,12 @@ fun FeatureCard(
         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF252525))
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 14.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(accentColor.copy(alpha = 0.15f)),
-                    contentAlignment = Alignment.Center
-                ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(accentColor.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
                     Icon(icon, contentDescription = title, tint = accentColor, modifier = Modifier.size(22.dp))
                 }
                 Column {

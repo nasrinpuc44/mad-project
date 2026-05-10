@@ -1,5 +1,6 @@
 package com.example.smarthomeai
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -24,11 +25,13 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.smarthomeai.utils.LogHelper
+import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -41,13 +44,22 @@ class AutomationActivity : ComponentActivity() {
     }
 }
 
+const val MODE_PREF = "mode_prefs"
+const val CURRENT_ACTIVE_MODE = "current_active_mode"
+
 @Composable
 fun AutomationScreen(onBackClick: () -> Unit) {
+    val context = LocalContext.current
     val dbRef = remember { LogHelper.getDeviceStatusRef() }
     val coroutineScope = rememberCoroutineScope()
     var showSuccessDialog by remember { mutableStateOf(false) }
     var successMessage by remember { mutableStateOf("") }
-    var selectedMode by remember { mutableStateOf("No mode selected") }
+    var showErrorDialog by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf("") }
+
+    val sharedPref = context.getSharedPreferences(MODE_PREF, Context.MODE_PRIVATE)
+    var selectedMode by remember { mutableStateOf(sharedPref.getString(CURRENT_ACTIVE_MODE, "No mode selected") ?: "No mode selected") }
+
     var customLightOn by remember { mutableStateOf(false) }
     var customFanOn by remember { mutableStateOf(false) }
     var customAcOn by remember { mutableStateOf(false) }
@@ -56,6 +68,16 @@ fun AutomationScreen(onBackClick: () -> Unit) {
     var customTemp by remember { mutableStateOf(24f) }
     var isApplying by remember { mutableStateOf(false) }
 
+    suspend fun saveModeNotification(modeName: String, isActivated: Boolean) {
+        val userId = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val title = if (isActivated) "🎯 $modeName Activated" else "🔴 $modeName Deactivated"
+        val message = if (isActivated)
+            "$modeName has been activated. Your smart devices are now configured for this mode."
+        else
+            "$modeName has been deactivated. All devices are turned OFF."
+        addFirestoreNotification(userId, "mode", title, message, actionData = modeName)
+    }
+
     fun showSuccessMessage(message: String) {
         successMessage = message
         showSuccessDialog = true
@@ -63,6 +85,25 @@ fun AutomationScreen(onBackClick: () -> Unit) {
             delay(2000)
             showSuccessDialog = false
         }
+    }
+
+    fun showErrorMessage(message: String) {
+        errorMessage = message
+        showErrorDialog = true
+        coroutineScope.launch {
+            delay(2000)
+            showErrorDialog = false
+        }
+    }
+
+    fun saveActiveMode(modeName: String) {
+        sharedPref.edit().putString(CURRENT_ACTIVE_MODE, modeName).apply()
+        selectedMode = modeName
+    }
+
+    fun clearActiveMode() {
+        sharedPref.edit().remove(CURRENT_ACTIVE_MODE).apply()
+        selectedMode = "No mode selected"
     }
 
     fun applyMode(
@@ -74,6 +115,38 @@ fun AutomationScreen(onBackClick: () -> Unit) {
         acOn: Boolean,
         temperature: Int
     ) {
+        if (selectedMode != "No mode selected" && selectedMode != modeName) {
+            showErrorMessage("⚠️ You are already in $selectedMode.\nPlease turn off $selectedMode before activating $modeName.")
+            return
+        }
+
+        if (selectedMode == modeName) {
+            val offData = mapOf(
+                "mode" to "No mode selected",
+                "lightOn" to false,
+                "lightBrightness" to 0,
+                "fanOn" to false,
+                "fanSpeed" to "Low",
+                "acOn" to false,
+                "temperature" to 24
+            )
+
+            isApplying = true
+            LogHelper.applyMode("Off Mode", offData) { success, message ->
+                isApplying = false
+                if (success) {
+                    clearActiveMode()
+                    showSuccessMessage("✓ $modeName deactivated successfully")
+                    coroutineScope.launch {
+                        saveModeNotification(modeName, false)
+                    }
+                } else {
+                    showErrorMessage("✗ Failed to deactivate mode")
+                }
+            }
+            return
+        }
+
         isApplying = true
         val data = mapOf(
             "mode" to modeName,
@@ -87,9 +160,14 @@ fun AutomationScreen(onBackClick: () -> Unit) {
 
         LogHelper.applyMode(modeName, data) { success, message ->
             isApplying = false
-            showSuccessMessage(message)
             if (success) {
-                selectedMode = modeName
+                saveActiveMode(modeName)
+                showSuccessMessage(message)
+                coroutineScope.launch {
+                    saveModeNotification(modeName, true)
+                }
+            } else {
+                showErrorMessage("✗ Failed to activate $modeName")
             }
         }
     }
@@ -97,7 +175,11 @@ fun AutomationScreen(onBackClick: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize().background(DarkBg)) {
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             AnimatedTopBar(onBackClick = onBackClick)
-            AnimatedCurrentModeBanner(selectedMode = selectedMode)
+            AnimatedCurrentModeBanner(selectedMode = selectedMode, onTurnOff = {
+                if (selectedMode != "No mode selected") {
+                    applyMode(selectedMode, false, 0, false, "Low", false, 24)
+                }
+            })
             Spacer(modifier = Modifier.height(8.dp))
             SectionHeaderAutomation(title = "⚡ Smart Modes", subtitle = "One-tap automation")
 
@@ -105,6 +187,7 @@ fun AutomationScreen(onBackClick: () -> Unit) {
                 title = "Study Mode", subtitle = "Light ON • Fan Medium • 90% Brightness",
                 icon = Icons.Filled.MenuBook, iconBgColor = BlueAccent,
                 gradientColors = listOf(Color(0xFF1E3A5F), CardDark),
+                isActive = selectedMode == "Study Mode",
                 onClick = { applyMode("Study Mode", true, 90, true, "Medium", false, 24) }
             )
 
@@ -112,6 +195,7 @@ fun AutomationScreen(onBackClick: () -> Unit) {
                 title = "Sleep Mode", subtitle = "Dim Light • Fan Low • 20% Brightness",
                 icon = Icons.Filled.Bedtime, iconBgColor = PurpleAccent,
                 gradientColors = listOf(Color(0xFF2D1B4E), CardDark),
+                isActive = selectedMode == "Sleep Mode",
                 onClick = { applyMode("Sleep Mode", true, 20, true, "Low", false, 24) }
             )
 
@@ -119,6 +203,7 @@ fun AutomationScreen(onBackClick: () -> Unit) {
                 title = "Prayer Mode", subtitle = "Soft Light • Silent • 35% Brightness",
                 icon = Icons.Filled.Mosque, iconBgColor = Color(0xFF14B8A6),
                 gradientColors = listOf(Color(0xFF134E4A), CardDark),
+                isActive = selectedMode == "Prayer Mode",
                 onClick = { applyMode("Prayer Mode", true, 35, false, "Low", false, 24) }
             )
 
@@ -126,6 +211,7 @@ fun AutomationScreen(onBackClick: () -> Unit) {
                 title = "Away Mode", subtitle = "All Devices OFF • Energy Saving",
                 icon = Icons.Filled.DirectionsRun, iconBgColor = EmergencyRed,
                 gradientColors = listOf(Color(0xFF4A0E0E), CardDark),
+                isActive = selectedMode == "Away Mode",
                 onClick = { applyMode("Away Mode", false, 0, false, "Low", false, 24) }
             )
 
@@ -139,13 +225,19 @@ fun AutomationScreen(onBackClick: () -> Unit) {
                 customFanSpeed = customFanSpeed, onFanSpeedChange = { customFanSpeed = it },
                 customTemp = customTemp, onTempChange = { customTemp = it },
                 onApply = {
-                    applyMode("Custom Mode", customLightOn, customBrightness.toInt(), customFanOn, customFanSpeed, customAcOn, customTemp.toInt())
+                    if (selectedMode != "No mode selected" && selectedMode != "Custom Mode") {
+                        showErrorMessage("⚠️ You are already in $selectedMode.\nPlease turn off $selectedMode before activating Custom Mode.")
+                    } else {
+                        applyMode("Custom Mode", customLightOn, customBrightness.toInt(), customFanOn, customFanSpeed, customAcOn, customTemp.toInt())
+                    }
                 },
-                isApplying = isApplying
+                isApplying = isApplying,
+                isActive = selectedMode == "Custom Mode"
             )
             Spacer(modifier = Modifier.height(24.dp))
         }
         if (showSuccessDialog) { SuccessToast(message = successMessage) }
+        if (showErrorDialog) { ErrorToast(message = errorMessage) }
     }
 }
 
@@ -164,7 +256,7 @@ fun AnimatedTopBar(onBackClick: () -> Unit) {
 }
 
 @Composable
-fun AnimatedCurrentModeBanner(selectedMode: String) {
+fun AnimatedCurrentModeBanner(selectedMode: String, onTurnOff: () -> Unit) {
     val animatedProgress by animateFloatAsState(targetValue = if (selectedMode != "No mode selected") 1f else 0f, animationSpec = tween(500))
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp),
@@ -186,7 +278,17 @@ fun AnimatedCurrentModeBanner(selectedMode: String) {
                 }
             }
             if (selectedMode != "No mode selected") {
-                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(GreenAccent).scale(animatedProgress))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(GreenAccent).scale(animatedProgress))
+                    Button(
+                        onClick = onTurnOff,
+                        colors = ButtonDefaults.buttonColors(containerColor = EmergencyRed.copy(alpha = 0.15f)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Text("Turn Off", color = EmergencyRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         }
     }
@@ -202,25 +304,39 @@ fun SectionHeaderAutomation(title: String, subtitle: String) {
 }
 
 @Composable
-fun ModeCard(title: String, subtitle: String, icon: ImageVector, iconBgColor: Color, gradientColors: List<Color>, onClick: () -> Unit) {
+fun ModeCard(title: String, subtitle: String, icon: ImageVector, iconBgColor: Color, gradientColors: List<Color>, isActive: Boolean, onClick: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp).clickable { onClick() },
-        shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = CardDark)
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = if (isActive) iconBgColor.copy(alpha = 0.1f) else CardDark),
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (isActive) iconBgColor.copy(alpha = 0.3f) else Color(0xFF252525))
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().background(Brush.horizontalGradient(gradientColors)).padding(16.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.weight(1f)) {
-                Box(modifier = Modifier.size(52.dp).clip(RoundedCornerShape(14.dp)).background(iconBgColor.copy(alpha = 0.2f)).border(1.dp, iconBgColor.copy(alpha = 0.3f), RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
-                    Icon(icon, contentDescription = title, tint = iconBgColor, modifier = Modifier.size(28.dp))
+                Box(modifier = Modifier.size(52.dp).clip(RoundedCornerShape(14.dp)).background(iconBgColor.copy(alpha = 0.2f)).border(1.dp, if (isActive) iconBgColor else iconBgColor.copy(alpha = 0.3f), RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
+                    Icon(icon, contentDescription = title, tint = if (isActive) iconBgColor else iconBgColor.copy(alpha = 0.5f), modifier = Modifier.size(28.dp))
                 }
                 Column {
-                    Text(title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(title, color = if (isActive) iconBgColor else TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        if (isActive) {
+                            Surface(shape = RoundedCornerShape(4.dp), color = iconBgColor.copy(alpha = 0.2f)) {
+                                Text("ACTIVE", color = iconBgColor, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                            }
+                        }
+                    }
                     Text(subtitle, color = TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            Icon(Icons.Default.PlayArrow, contentDescription = "Apply", tint = GreenAccent, modifier = Modifier.size(28.dp))
+            Icon(
+                if (isActive) Icons.Default.CheckCircle else Icons.Default.PlayArrow,
+                contentDescription = if (isActive) "Active" else "Apply",
+                tint = if (isActive) iconBgColor else GreenAccent,
+                modifier = Modifier.size(28.dp)
+            )
         }
     }
 }
@@ -233,20 +349,29 @@ fun AnimatedCustomModeSection(
     customBrightness: Float, onBrightnessChange: (Float) -> Unit,
     customFanSpeed: String, onFanSpeedChange: (String) -> Unit,
     customTemp: Float, onTempChange: (Float) -> Unit,
-    onApply: () -> Unit, isApplying: Boolean
+    onApply: () -> Unit, isApplying: Boolean,
+    isActive: Boolean
 ) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = CardDark),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF252525))
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = if (isActive) GreenAccent.copy(alpha = 0.05f) else CardDark),
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (isActive) GreenAccent.copy(alpha = 0.3f) else Color(0xFF252525))
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(GreenAccent.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.Settings, contentDescription = "Custom", tint = GreenAccent, modifier = Modifier.size(24.dp))
+                Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(if (isActive) GreenAccent.copy(alpha = 0.15f) else GreenAccent.copy(alpha = 0.08f)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Settings, contentDescription = "Custom", tint = if (isActive) GreenAccent else TextSecondary, modifier = Modifier.size(24.dp))
                 }
                 Column {
-                    Text("Custom Mode", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Custom Mode", color = if (isActive) GreenAccent else TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        if (isActive) {
+                            Surface(shape = RoundedCornerShape(4.dp), color = GreenAccent.copy(alpha = 0.2f)) {
+                                Text("ACTIVE", color = GreenAccent, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                            }
+                        }
+                    }
                     Text("Create your own automation", color = TextSecondary, fontSize = 12.sp)
                 }
             }
@@ -267,15 +392,15 @@ fun AnimatedCustomModeSection(
             }
             Spacer(modifier = Modifier.height(24.dp))
 
-            Button(onClick = onApply, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = GreenAccent, contentColor = Color.Black), enabled = !isApplying) {
+            Button(onClick = onApply, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = if (isActive) GreenAccent.copy(alpha = 0.3f) else GreenAccent, contentColor = Color.Black), enabled = !isApplying) {
                 if (isApplying) {
                     CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.Black, strokeWidth = 2.dp)
                     Spacer(modifier = Modifier.width(12.dp))
                     Text("Applying...", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 } else {
-                    Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(22.dp))
+                    Icon(if (isActive) Icons.Default.PowerSettingsNew else Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(22.dp))
                     Spacer(modifier = Modifier.width(10.dp))
-                    Text("Apply Custom Mode", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(if (isActive) "Deactivate Mode" else "Apply Custom Mode", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -335,6 +460,18 @@ fun BoxScope.SuccessToast(message: String) {
         Card(modifier = Modifier.padding(24.dp), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = GreenAccent)) {
             Row(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color.Black, modifier = Modifier.size(20.dp))
+                Text(message, color = Color.Black, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            }
+        }
+    }
+}
+
+@Composable
+fun BoxScope.ErrorToast(message: String) {
+    AnimatedVisibility(visible = true, enter = fadeIn() + slideInVertically(), exit = fadeOut() + slideOutVertically(), modifier = Modifier.align(Alignment.BottomCenter)) {
+        Card(modifier = Modifier.padding(24.dp), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = EmergencyRed)) {
+            Row(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(Icons.Default.Warning, contentDescription = null, tint = Color.Black, modifier = Modifier.size(20.dp))
                 Text(message, color = Color.Black, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             }
         }

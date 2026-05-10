@@ -34,9 +34,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.smarthomeai.utils.LogHelper
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import kotlin.math.*
 
 class IslamicFeatureActivity : ComponentActivity() {
@@ -50,7 +57,50 @@ class IslamicFeatureActivity : ComponentActivity() {
     }
 }
 
-// ─── Prayer Times Data ────────────────────────────────────────────────────────
+// ==================== Prayer Times Data with Monthly Variations ====================
+
+data class MonthlyPrayerTimes(
+    val month: Int,
+    val monthName: String,
+    val fajr: String,
+    val sunrise: String,
+    val dhuhr: String,
+    val asr: String,
+    val maghrib: String,
+    val isha: String
+)
+
+// Dhaka Monthly Prayer Times (approximate average for each month)
+val dhakaMonthlyTimes = listOf(
+    MonthlyPrayerTimes(1, "January", "5:25 AM", "6:45 AM", "12:05 PM", "3:25 PM", "5:30 PM", "6:50 PM"),
+    MonthlyPrayerTimes(2, "February", "5:15 AM", "6:35 AM", "12:10 PM", "3:35 PM", "5:50 PM", "7:05 PM"),
+    MonthlyPrayerTimes(3, "March", "5:00 AM", "6:20 AM", "12:10 PM", "3:40 PM", "6:10 PM", "7:20 PM"),
+    MonthlyPrayerTimes(4, "April", "4:40 AM", "5:55 AM", "12:00 PM", "3:30 PM", "6:20 PM", "7:35 PM"),
+    MonthlyPrayerTimes(5, "May", "4:25 AM", "5:35 AM", "11:55 AM", "3:25 PM", "6:35 PM", "7:50 PM"),
+    MonthlyPrayerTimes(6, "June", "4:15 AM", "5:25 AM", "11:55 AM", "3:25 PM", "6:45 PM", "8:00 PM"),
+    MonthlyPrayerTimes(7, "July", "4:20 AM", "5:30 AM", "12:00 PM", "3:30 PM", "6:45 PM", "7:55 PM"),
+    MonthlyPrayerTimes(8, "August", "4:30 AM", "5:40 AM", "12:00 PM", "3:30 PM", "6:35 PM", "7:45 PM"),
+    MonthlyPrayerTimes(9, "September", "4:45 AM", "5:55 AM", "12:00 PM", "3:25 PM", "6:10 PM", "7:25 PM"),
+    MonthlyPrayerTimes(10, "October", "5:00 AM", "6:10 AM", "12:00 PM", "3:20 PM", "5:45 PM", "7:00 PM"),
+    MonthlyPrayerTimes(11, "November", "5:15 AM", "6:30 AM", "12:00 PM", "3:20 PM", "5:20 PM", "6:40 PM"),
+    MonthlyPrayerTimes(12, "December", "5:25 AM", "6:45 AM", "12:05 PM", "3:25 PM", "5:15 PM", "6:35 PM")
+)
+
+// Chittagong Monthly Prayer Times
+val chittagongMonthlyTimes = listOf(
+    MonthlyPrayerTimes(1, "January", "5:15 AM", "6:35 AM", "11:55 AM", "3:15 PM", "5:20 PM", "6:40 PM"),
+    MonthlyPrayerTimes(2, "February", "5:05 AM", "6:25 AM", "12:00 PM", "3:25 PM", "5:40 PM", "6:55 PM"),
+    MonthlyPrayerTimes(3, "March", "4:50 AM", "6:10 AM", "12:00 PM", "3:30 PM", "6:00 PM", "7:10 PM"),
+    MonthlyPrayerTimes(4, "April", "4:30 AM", "5:45 AM", "11:50 AM", "3:20 PM", "6:10 PM", "7:25 PM"),
+    MonthlyPrayerTimes(5, "May", "4:15 AM", "5:25 AM", "11:45 AM", "3:15 PM", "6:25 PM", "7:40 PM"),
+    MonthlyPrayerTimes(6, "June", "4:05 AM", "5:15 AM", "11:45 AM", "3:15 PM", "6:35 PM", "7:50 PM"),
+    MonthlyPrayerTimes(7, "July", "4:10 AM", "5:20 AM", "11:50 AM", "3:20 PM", "6:35 PM", "7:45 PM"),
+    MonthlyPrayerTimes(8, "August", "4:20 AM", "5:30 AM", "11:50 AM", "3:20 PM", "6:25 PM", "7:35 PM"),
+    MonthlyPrayerTimes(9, "September", "4:35 AM", "5:45 AM", "11:50 AM", "3:15 PM", "6:00 PM", "7:15 PM"),
+    MonthlyPrayerTimes(10, "October", "4:50 AM", "6:00 AM", "11:50 AM", "3:10 PM", "5:35 PM", "6:50 PM"),
+    MonthlyPrayerTimes(11, "November", "5:05 AM", "6:20 AM", "11:50 AM", "3:10 PM", "5:10 PM", "6:30 PM"),
+    MonthlyPrayerTimes(12, "December", "5:15 AM", "6:35 AM", "11:55 AM", "3:15 PM", "5:05 PM", "6:25 PM")
+)
 
 data class CityPrayerTimes(
     val city: String,
@@ -62,28 +112,44 @@ data class CityPrayerTimes(
     val isha: String
 )
 
-// Dhaka & Chittagong annual average prayer times (April)
-val dhakaPrayerTimes = CityPrayerTimes(
-    city = "Dhaka",
-    fajr = "4:19 AM",
-    sunrise = "5:45 AM",
-    dhuhr = "11:57 AM",
-    asr = "3:23 PM",
-    maghrib = "6:08 PM",
-    isha = "7:28 PM"
-)
+// Function to get current month's prayer times for Dhaka
+fun getCurrentDhakaPrayerTimes(): CityPrayerTimes {
+    val calendar = Calendar.getInstance()
+    val currentMonth = calendar.get(Calendar.MONTH) + 1 // January = 0, so +1
+    val monthData = dhakaMonthlyTimes.find { it.month == currentMonth } ?: dhakaMonthlyTimes[3] // Default April
+    return CityPrayerTimes(
+        city = "Dhaka",
+        fajr = monthData.fajr,
+        sunrise = monthData.sunrise,
+        dhuhr = monthData.dhuhr,
+        asr = monthData.asr,
+        maghrib = monthData.maghrib,
+        isha = monthData.isha
+    )
+}
 
-val chittagongPrayerTimes = CityPrayerTimes(
-    city = "Chittagong",
-    fajr = "4:10 AM",
-    sunrise = "5:35 AM",
-    dhuhr = "11:48 AM",
-    asr = "3:14 PM",
-    maghrib = "5:59 PM",
-    isha = "7:19 PM"
-)
+// Function to get current month's prayer times for Chittagong
+fun getCurrentChittagongPrayerTimes(): CityPrayerTimes {
+    val calendar = Calendar.getInstance()
+    val currentMonth = calendar.get(Calendar.MONTH) + 1
+    val monthData = chittagongMonthlyTimes.find { it.month == currentMonth } ?: chittagongMonthlyTimes[3]
+    return CityPrayerTimes(
+        city = "Chittagong",
+        fajr = monthData.fajr,
+        sunrise = monthData.sunrise,
+        dhuhr = monthData.dhuhr,
+        asr = monthData.asr,
+        maghrib = monthData.maghrib,
+        isha = monthData.isha
+    )
+}
 
-// ─── Real Compass Helper ──────────────────────────────────────────────────────
+// Legacy variables for backward compatibility
+val dhakaPrayerTimes: CityPrayerTimes
+    get() = getCurrentDhakaPrayerTimes()
+
+val chittagongPrayerTimes: CityPrayerTimes
+    get() = getCurrentChittagongPrayerTimes()
 
 @Composable
 fun rememberCompassBearing(): Float {
@@ -119,7 +185,6 @@ fun rememberCompassBearing(): Float {
                     if (SensorManager.getRotationMatrix(R, I, gravity, geomagnetic)) {
                         val orientation = FloatArray(3)
                         SensorManager.getOrientation(R, orientation)
-                        // azimuth in degrees (0 = North, clockwise)
                         bearing = Math.toDegrees(orientation[0].toDouble()).toFloat()
                         if (bearing < 0) bearing += 360f
                     }
@@ -138,28 +203,27 @@ fun rememberCompassBearing(): Float {
     return bearing
 }
 
-// Qibla bearing from Dhaka ≈ 277° (West-North-West)
-// Qibla bearing from Chittagong ≈ 276°
 const val QIBLA_BEARING_DHAKA = 277f
 const val QIBLA_BEARING_CHITTAGONG = 276f
 
-// ─── Main Screen ──────────────────────────────────────────────────────────────
-
 @Composable
 fun IslamicFeatureScreen(onBackClick: () -> Unit) {
+    val context = LocalContext.current
     val dbRef = remember {
         FirebaseDatabase.getInstance().getReference("devices/status")
     }
-
     val coroutineScope = rememberCoroutineScope()
     var showSuccessToast by remember { mutableStateOf(false) }
     var toastMessage by remember { mutableStateOf("") }
 
     var azanReminder by remember { mutableStateOf(false) }
     var prayerModeEnabled by remember { mutableStateOf(false) }
-
-    // City selection: 0 = Dhaka, 1 = Chittagong
     var selectedCity by remember { mutableStateOf(0) }
+
+    // Current month display
+    val calendar = Calendar.getInstance()
+    val currentMonthName = SimpleDateFormat("MMMM", Locale.getDefault()).format(Date())
+    val currentYear = calendar.get(Calendar.YEAR)
 
     fun showFeedback(message: String) {
         toastMessage = message
@@ -168,6 +232,11 @@ fun IslamicFeatureScreen(onBackClick: () -> Unit) {
             delay(2000)
             showSuccessToast = false
         }
+    }
+
+    suspend fun saveIslamicNotification(title: String, message: String) {
+        val userId = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        addFirestoreNotification(userId, "islamic_feature", title, message)
     }
 
     fun applyPrayerMode() {
@@ -183,6 +252,13 @@ fun IslamicFeatureScreen(onBackClick: () -> Unit) {
         dbRef.updateChildren(data).addOnCompleteListener {
             if (it.isSuccessful) {
                 prayerModeEnabled = true
+                LogHelper.addAzanLog("prayer_mode_activated", "🕌 Prayer Mode Activated - Light dimmed to 30%, Fan OFF")
+                coroutineScope.launch {
+                    saveIslamicNotification(
+                        "🕋 Prayer Mode Activated",
+                        "Light dimmed to 30% and fan turned OFF for peaceful prayer environment."
+                    )
+                }
                 showFeedback("✓ Prayer Mode Activated")
             } else {
                 showFeedback("✗ Failed to activate Prayer Mode")
@@ -206,7 +282,41 @@ fun IslamicFeatureScreen(onBackClick: () -> Unit) {
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // ── City Selector ──
+            // Month and Year Display
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = IslamicTeal.copy(alpha = 0.1f)),
+                border = BorderStroke(1.dp, IslamicTeal.copy(alpha = 0.3f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = IslamicTeal, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "$currentMonthName $currentYear",
+                        color = IslamicTeal,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        "(Monthly Prayer Schedule)",
+                        color = TextSecondary,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
             CitySelector(
                 selectedCity = selectedCity,
                 onCityChange = { selectedCity = it }
@@ -214,30 +324,44 @@ fun IslamicFeatureScreen(onBackClick: () -> Unit) {
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // ── Prayer Times ──
-            val prayerData = if (selectedCity == 0) dhakaPrayerTimes else chittagongPrayerTimes
-            EnhancedPrayerTimeCard(cityData = prayerData)
+            // Get current prayer times based on selected city and current month
+            val prayerData = if (selectedCity == 0) getCurrentDhakaPrayerTimes() else getCurrentChittagongPrayerTimes()
+            EnhancedPrayerTimeCard(cityData = prayerData, currentMonth = currentMonthName)
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // ── Azan Reminder ──
             EnhancedAzanReminderCard(
                 azanReminder = azanReminder,
                 onReminderChange = {
                     azanReminder = it
+                    LogHelper.addAzanLog(
+                        if (it) "azan_reminder_enabled" else "azan_reminder_disabled",
+                        if (it) "🕌 Azan Reminder Enabled" else "🕌 Azan Reminder Disabled"
+                    )
+                    coroutineScope.launch {
+                        if (it) {
+                            saveIslamicNotification(
+                                "🕌 Azan Reminder Enabled",
+                                "You will now receive prayer time notifications based on $currentMonthName schedule."
+                            )
+                        } else {
+                            saveIslamicNotification(
+                                "🕌 Azan Reminder Disabled",
+                                "Prayer time notifications have been turned off."
+                            )
+                        }
+                    }
                     showFeedback(if (it) "✓ Azan Reminder Enabled" else "✓ Azan Reminder Disabled")
                 }
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // ── Real Qibla Compass (FIXED) ──
             val qiblaBearing = if (selectedCity == 0) QIBLA_BEARING_DHAKA else QIBLA_BEARING_CHITTAGONG
             RealQiblaCompassCard(qiblaBearing = qiblaBearing)
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // ── Prayer Mode ──
             EnhancedPrayerModeCard(
                 prayerModeEnabled = prayerModeEnabled,
                 onPrayerModeClick = { applyPrayerMode() }
@@ -253,8 +377,6 @@ fun IslamicFeatureScreen(onBackClick: () -> Unit) {
         }
     }
 }
-
-// ─── City Selector ────────────────────────────────────────────────────────────
 
 @Composable
 fun CitySelector(selectedCity: Int, onCityChange: (Int) -> Unit) {
@@ -295,14 +417,10 @@ fun CitySelector(selectedCity: Int, onCityChange: (Int) -> Unit) {
     }
 }
 
-// ─── Real Qibla Compass (FIXED) ───────────────────────────────────────────────
-
 @Composable
 fun RealQiblaCompassCard(qiblaBearing: Float) {
-    // Live compass bearing from device sensor
     val rawDeviceBearing = rememberCompassBearing()
 
-    // Smooth animation for device bearing
     val deviceBearing by animateFloatAsState(
         targetValue = rawDeviceBearing,
         animationSpec = tween(300, easing = LinearEasing),
@@ -323,7 +441,6 @@ fun RealQiblaCompassCard(qiblaBearing: Float) {
                 .padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -349,7 +466,6 @@ fun RealQiblaCompassCard(qiblaBearing: Float) {
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // ── Compass Drawing (FIXED) ──
             Box(
                 modifier = Modifier.size(260.dp),
                 contentAlignment = Alignment.Center
@@ -360,16 +476,11 @@ fun RealQiblaCompassCard(qiblaBearing: Float) {
                     val outerR = size.minDimension / 2f - 6f
                     val innerR = outerR - 26f
 
-                    // KEY FIX: Helper function for compass-to-canvas angle conversion
-                    // Canvas 0° = East (right), Compass 0° = North (up)
-                    // So subtract 90° to align properly
                     fun compassToCanvas(bearing: Float): Double =
                         Math.toRadians((bearing - 90.0))
 
-                    // Background circle
                     drawCircle(color = Color(0xFF1A2A2A), radius = outerR, center = Offset(cx, cy))
 
-                    // Outer ring
                     drawCircle(
                         color = IslamicTeal.copy(alpha = 0.5f),
                         radius = outerR,
@@ -377,7 +488,6 @@ fun RealQiblaCompassCard(qiblaBearing: Float) {
                         style = Stroke(width = 3f)
                     )
 
-                    // Inner ring
                     drawCircle(
                         color = IslamicTeal.copy(alpha = 0.15f),
                         radius = innerR,
@@ -385,9 +495,7 @@ fun RealQiblaCompassCard(qiblaBearing: Float) {
                         style = Stroke(width = 1.5f)
                     )
 
-                    // ── Degree tick marks (compass rose rotates opposite to device) ──
                     for (deg in 0 until 360 step 5) {
-                        // Rose rotates opposite to device movement
                         val roseBearing = deg.toFloat() - deviceBearing
                         val angle = compassToCanvas(roseBearing)
                         val isMajor = deg % 30 == 0
@@ -403,12 +511,11 @@ fun RealQiblaCompassCard(qiblaBearing: Float) {
                         )
                     }
 
-                    // ── Cardinal directions (N/S/E/W) ──
                     val cardinals = listOf(
-                        Triple("N", 0f, Color(0xFFFF5252)),   // North - Red
-                        Triple("S", 180f, TextSecondary),     // South - Grey
-                        Triple("E", 90f, TextSecondary),      // East - Grey
-                        Triple("W", 270f, Color(0xFF64B5F6))  // West - Blue
+                        Triple("N", 0f, Color(0xFFFF5252)),
+                        Triple("S", 180f, TextSecondary),
+                        Triple("E", 90f, TextSecondary),
+                        Triple("W", 270f, Color(0xFF64B5F6))
                     )
 
                     val paint = android.graphics.Paint().apply {
@@ -418,7 +525,6 @@ fun RealQiblaCompassCard(qiblaBearing: Float) {
                     }
 
                     cardinals.forEach { (label, compassBearing, color) ->
-                        // Rose angle = compass bearing minus device bearing
                         val roseBearing = compassBearing - deviceBearing
                         val angle = compassToCanvas(roseBearing)
                         val r = outerR - 40f
@@ -441,7 +547,6 @@ fun RealQiblaCompassCard(qiblaBearing: Float) {
                         }
                     }
 
-                    // ── West highlight band (points to West direction) ──
                     val westRoseBearing = 270f - deviceBearing
                     val westAngle = compassToCanvas(westRoseBearing)
                     val westX = cx + (innerR - 20f) * cos(westAngle).toFloat()
@@ -454,7 +559,6 @@ fun RealQiblaCompassCard(qiblaBearing: Float) {
                         cap = StrokeCap.Round
                     )
 
-                    // ── Qibla arrow (green, always points to Qibla) ──
                     val qiblaRoseBearing = qiblaBearing - deviceBearing
                     val qAngle = compassToCanvas(qiblaRoseBearing)
                     val qTipX = cx + (innerR - 15f) * cos(qAngle).toFloat()
@@ -462,7 +566,6 @@ fun RealQiblaCompassCard(qiblaBearing: Float) {
                     val qTailX = cx - 30f * cos(qAngle).toFloat()
                     val qTailY = cy - 30f * sin(qAngle).toFloat()
 
-                    // Glow effect
                     drawLine(
                         color = IslamicTeal.copy(alpha = 0.25f),
                         start = Offset(qTailX, qTailY),
@@ -471,7 +574,6 @@ fun RealQiblaCompassCard(qiblaBearing: Float) {
                         cap = StrokeCap.Round
                     )
 
-                    // Needle
                     drawLine(
                         color = IslamicTeal,
                         start = Offset(qTailX, qTailY),
@@ -480,7 +582,6 @@ fun RealQiblaCompassCard(qiblaBearing: Float) {
                         cap = StrokeCap.Round
                     )
 
-                    // Arrowhead
                     val arrowSize = 18f
                     val qAngleDegrees = Math.toDegrees(qAngle)
                     val arrowLeft = Math.toRadians(qAngleDegrees + 145.0)
@@ -503,11 +604,9 @@ fun RealQiblaCompassCard(qiblaBearing: Float) {
                         cap = StrokeCap.Round
                     )
 
-                    // Kaaba symbol at tip
                     drawCircle(color = IslamicTeal, radius = 8f, center = Offset(qTipX, qTipY))
                     drawCircle(color = Color.Black, radius = 4f, center = Offset(qTipX, qTipY))
 
-                    // Center pivot
                     drawCircle(color = IslamicTeal, radius = 10f, center = Offset(cx, cy))
                     drawCircle(color = Color.Black, radius = 5f, center = Offset(cx, cy))
                 }
@@ -515,7 +614,6 @@ fun RealQiblaCompassCard(qiblaBearing: Float) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // ── Info Row ──
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
@@ -542,7 +640,6 @@ fun RealQiblaCompassCard(qiblaBearing: Float) {
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Legend
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = IslamicTeal.copy(alpha = 0.07f),
@@ -595,8 +692,6 @@ fun CompassInfoChip(label: String, value: String, color: Color, icon: String) {
     }
 }
 
-// ─── Top Bar ──────────────────────────────────────────────────────────────────
-
 @Composable
 fun AnimatedIslamicTopBar(onBackClick: () -> Unit) {
     Row(
@@ -627,8 +722,6 @@ fun AnimatedIslamicTopBar(onBackClick: () -> Unit) {
             tint = IslamicTeal, modifier = Modifier.size(32.dp))
     }
 }
-
-// ─── Date Time Card ───────────────────────────────────────────────────────────
 
 @Composable
 fun IslamicDateTimeCard() {
@@ -670,15 +763,11 @@ fun IslamicDateTimeCard() {
     }
 }
 
-// ─── Prayer Times Card ────────────────────────────────────────────────────────
-
 data class PrayerTime(val name: String, val arabicName: String, val time: String,
                       val icon: String, val isNext: Boolean)
 
 @Composable
-fun EnhancedPrayerTimeCard(cityData: CityPrayerTimes) {
-
-    // Determine next prayer based on current time
+fun EnhancedPrayerTimeCard(cityData: CityPrayerTimes, currentMonth: String = "") {
     val currentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
     val currentMinute = java.util.Calendar.getInstance().get(java.util.Calendar.MINUTE)
     val nowMinutes = currentHour * 60 + currentMinute
@@ -702,7 +791,7 @@ fun EnhancedPrayerTimeCard(cityData: CityPrayerTimes) {
 
     val icons = listOf("🌙", "☀️", "🌤", "🌅", "🌃")
     var nextIdx = rawTimes.indexOfFirst { timeToMinutes(it.third) > nowMinutes }
-    if (nextIdx == -1) nextIdx = 0  // after Isha → next is Fajr
+    if (nextIdx == -1) nextIdx = 0
 
     val prayerTimes = rawTimes.mapIndexed { i, (en, bn, time) ->
         PrayerTime(en, bn, time, icons[i], isNext = i == nextIdx)
@@ -737,7 +826,7 @@ fun EnhancedPrayerTimeCard(cityData: CityPrayerTimes) {
                     Column {
                         Text("Prayer Times", color = TextPrimary,
                             fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        Text(cityData.city, color = IslamicTeal, fontSize = 12.sp,
+                        Text("${cityData.city} • $currentMonth", color = IslamicTeal, fontSize = 12.sp,
                             fontWeight = FontWeight.Medium)
                     }
                 }
@@ -747,7 +836,6 @@ fun EnhancedPrayerTimeCard(cityData: CityPrayerTimes) {
                 }
             }
 
-            // Sunrise info
             Spacer(modifier = Modifier.height(8.dp))
             Surface(shape = RoundedCornerShape(10.dp), color = Color(0xFF1A2A1A),
                 modifier = Modifier.fillMaxWidth()) {
@@ -761,7 +849,6 @@ fun EnhancedPrayerTimeCard(cityData: CityPrayerTimes) {
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Next Prayer Highlight
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
@@ -821,8 +908,6 @@ fun EnhancedPrayerTimeRow(name: String, subName: String, time: String, isActive:
     }
 }
 
-// ─── Azan Reminder Card ───────────────────────────────────────────────────────
-
 @Composable
 fun EnhancedAzanReminderCard(azanReminder: Boolean, onReminderChange: (Boolean) -> Unit) {
     Card(
@@ -870,8 +955,6 @@ fun EnhancedAzanReminderCard(azanReminder: Boolean, onReminderChange: (Boolean) 
         }
     }
 }
-
-// ─── Prayer Mode Card ─────────────────────────────────────────────────────────
 
 @Composable
 fun EnhancedPrayerModeCard(prayerModeEnabled: Boolean, onPrayerModeClick: () -> Unit) {
@@ -967,8 +1050,6 @@ fun EnhancedPrayerModeCard(prayerModeEnabled: Boolean, onPrayerModeClick: () -> 
     }
 }
 
-// ─── Islamic Quotes ───────────────────────────────────────────────────────────
-
 @Composable
 fun IslamicQuotesSection() {
     val quotes = listOf(
@@ -1016,8 +1097,6 @@ fun IslamicQuotesSection() {
     }
 }
 
-// ─── Toast ────────────────────────────────────────────────────────────────────
-
 @Composable
 private fun BoxScope.IslamicCustomToast(message: String) {
     AnimatedVisibility(
@@ -1048,4 +1127,32 @@ private fun BoxScope.IslamicCustomToast(message: String) {
             }
         }
     }
+}
+
+// Extension function to add notification to Firestore
+suspend fun addFirestoreNotification(
+    userId: String,
+    type: String,
+    title: String,
+    message: String,
+    actionData: String? = null,
+    modeName: String? = null
+) {
+    val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+    val notificationData = hashMapOf(
+        "type" to type,
+        "title" to title,
+        "message" to message,
+        "timestamp" to System.currentTimeMillis(),
+        "isRead" to false,
+        "actionData" to actionData
+    )
+    if (modeName != null) {
+        notificationData["modeName"] = modeName
+    }
+    firestore.collection("users")
+        .document(userId)
+        .collection("notifications")
+        .add(notificationData)
+        .await()
 }

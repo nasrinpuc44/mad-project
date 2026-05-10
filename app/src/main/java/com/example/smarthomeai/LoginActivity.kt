@@ -33,14 +33,22 @@ import androidx.compose.ui.unit.sp
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
+import com.google.firebase.firestore.FirebaseFirestore
 
 class LoginActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val auth = Firebase.auth
-        if (auth.currentUser != null) {
-            startActivity(Intent(this, HomeActivity::class.java))
+        val currentUser = auth.currentUser
+
+        if (currentUser != null) {
+            // Check if it's admin
+            if (currentUser.email == "smarthome@gmail.com") {
+                startActivity(Intent(this, AdminPanelActivity::class.java))
+            } else {
+                startActivity(Intent(this, HomeActivity::class.java))
+            }
             finish()
             return
         }
@@ -141,7 +149,7 @@ fun LoginUI() {
             OutlinedTextField(
                 value = emailInput,
                 onValueChange = { emailInput = it },
-                placeholder = { Text("Gmail address", fontSize = 15.sp, color = Color.Gray) },
+                placeholder = { Text("Email address", fontSize = 15.sp, color = Color.Gray) },
                 leadingIcon = {
                     Icon(Icons.Default.Email, contentDescription = null, tint = Color.Gray)
                 },
@@ -252,12 +260,22 @@ fun LoginUI() {
                                     isLoading = false
                                     if (task.isSuccessful) {
                                         val user = auth.currentUser
-                                        if (user?.isEmailVerified == true) {
+
+                                        // Check if email is verified (skip for admin)
+                                        if (user?.email == "smarthome@gmail.com") {
+                                            // Admin - no verification needed
+                                            val intent = Intent(context, AdminPanelActivity::class.java)
+                                            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                                            context.startActivity(intent)
+                                            (context as? ComponentActivity)?.finish()
+                                        } else if (user?.isEmailVerified == true) {
+                                            // Normal user with verified email
                                             val intent = Intent(context, HomeActivity::class.java)
                                             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                                             context.startActivity(intent)
                                             (context as? ComponentActivity)?.finish()
                                         } else {
+                                            // Normal user but email not verified
                                             auth.signOut()
                                             showError = true
                                             errorMessage = "Please verify your email address first. Check your inbox."

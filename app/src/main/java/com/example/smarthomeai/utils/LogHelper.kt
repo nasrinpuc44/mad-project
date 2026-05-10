@@ -43,6 +43,77 @@ object LogHelper {
             }
     }
 
+    // ============= EMERGENCY LOG ADD FUNCTION =============
+    fun addEmergencyLog(
+        alertType: String,  // "fire" or "gas"
+        status: Boolean
+    ) {
+        val userId = FirebaseAuth.getInstance().currentUser?.uid
+        if (userId == null) {
+            Log.e(TAG, "No user logged in, cannot save emergency log")
+            return
+        }
+
+        val details = if (alertType == "fire") {
+            if (status) "🔥 Fire Alert Activated" else "🔥 Fire Alert Deactivated"
+        } else {
+            if (status) "⚠️ Gas Leak Alert Activated" else "⚠️ Gas Leak Alert Deactivated"
+        }
+
+        val logEntry = hashMapOf<String, Any>(
+            "action" to "emergency_alert",
+            "details" to details,
+            "timestamp" to System.currentTimeMillis(),
+            "date" to Date(),
+            "appVersion" to Constants.APP_VERSION,
+            "alertType" to alertType,
+            "alertStatus" to status
+        )
+
+        firestore.collection(Constants.FS_USERS)
+            .document(userId)
+            .collection(Constants.FS_ACTIVITY_LOG)
+            .add(logEntry)
+            .addOnSuccessListener {
+                Log.d(TAG, "Emergency log saved to Firestore: $details")
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Error saving emergency log: ${e.message}")
+            }
+    }
+
+    // ============= ISLAMIC AZAN LOG ADD FUNCTION =============
+    fun addAzanLog(
+        action: String,  // "azan_reminder_enabled" or "azan_reminder_disabled" or "prayer_mode_activated"
+        details: String
+    ) {
+        val userId = FirebaseAuth.getInstance().currentUser?.uid
+        if (userId == null) {
+            Log.e(TAG, "No user logged in, cannot save azan log")
+            return
+        }
+
+        val logEntry = hashMapOf<String, Any>(
+            "action" to "islamic_feature",
+            "details" to details,
+            "timestamp" to System.currentTimeMillis(),
+            "date" to Date(),
+            "appVersion" to Constants.APP_VERSION,
+            "featureType" to action
+        )
+
+        firestore.collection(Constants.FS_USERS)
+            .document(userId)
+            .collection(Constants.FS_ACTIVITY_LOG)
+            .add(logEntry)
+            .addOnSuccessListener {
+                Log.d(TAG, "Islamic feature log saved: $details")
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Error saving Islamic log: ${e.message}")
+            }
+    }
+
     fun getDeviceStatusRef() = FirebaseDatabase.getInstance()
         .getReference(Constants.RTDB_USERS)
         .child(FirebaseAuth.getInstance().currentUser?.uid ?: "")

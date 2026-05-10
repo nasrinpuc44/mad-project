@@ -3,12 +3,13 @@ package com.example.smarthomeai.utils
 object Constants {
     const val APP_VERSION = "1.0.0"
 
-    // Realtime Database Paths
+    // Realtime Database Paths (Firebase Rules অনুযায়ী আপডেট)
     const val RTDB_USERS = "users"
     const val RTDB_DEVICES = "devices"
     const val RTDB_STATUS = "status"
     const val RTDB_EMERGENCY = "emergency"
     const val RTDB_ALERTS = "alerts"
+    const val RTDB_EMERGENCY_ALERTS = "emergency/alerts"
 
     // Cloud Firestore Collections
     const val FS_USERS = "users"

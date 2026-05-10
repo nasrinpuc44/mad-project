@@ -33,11 +33,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.smarthomeai.utils.LogHelper
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-// Color Palette
-private val EmergencyDark = Color(0xFFCC0000)
+import kotlinx.coroutines.tasks.await
 
 class EmergencyActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,6 +68,30 @@ class EmergencyActivity : ComponentActivity() {
     }
 }
 
+// Extension function to add notification to Firestore
+suspend fun addFirestoreNotification(
+    userId: String,
+    type: String,
+    title: String,
+    message: String,
+    actionData: String? = null
+) {
+    val firestore = FirebaseFirestore.getInstance()
+    val notificationData = hashMapOf(
+        "type" to type,
+        "title" to title,
+        "message" to message,
+        "timestamp" to System.currentTimeMillis(),
+        "isRead" to false,
+        "actionData" to actionData
+    )
+    firestore.collection("users")
+        .document(userId)
+        .collection("notifications")
+        .add(notificationData)
+        .await()
+}
+
 @Composable
 fun EmergencyScreen(
     onBackClick: () -> Unit,
@@ -81,7 +106,6 @@ fun EmergencyScreen(
     var isSosPressed by remember { mutableStateOf(false) }
     var pulseAnimation by remember { mutableStateOf(false) }
 
-    // Emergency contacts list - starts with mandatory 999
     var contacts by remember {
         mutableStateOf<List<EmergencyContact>>(
             listOf(
@@ -109,7 +133,23 @@ fun EmergencyScreen(
         }
     }
 
-    // Pulse animation for SOS button
+    suspend fun saveEmergencyNotification(alertType: String, isActivated: Boolean) {
+        val userId = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val title = if (isActivated) {
+            if (alertType == "fire") "🔥 FIRE ALERT!" else "⚠️ GAS LEAK ALERT!"
+        } else {
+            if (alertType == "fire") "✅ Fire Alert Resolved" else "✅ Gas Alert Resolved"
+        }
+        val message = if (isActivated) {
+            if (alertType == "fire") "FIRE detected in your home! Take immediate action!"
+            else "GAS LEAK detected! Open windows and leave immediately!"
+        } else {
+            if (alertType == "fire") "Fire alert has been resolved. System back to normal."
+            else "Gas leak alert has been resolved. System back to normal."
+        }
+        addFirestoreNotification(userId, "emergency", title, message, alertType)
+    }
+
     LaunchedEffect(isSosPressed) {
         while (isSosPressed) {
             pulseAnimation = true
@@ -129,17 +169,14 @@ fun EmergencyScreen(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
         ) {
-            // Animated Top Bar
             AnimatedEmergencyTopBar(onBackClick = onBackClick)
 
-            // SOS Button Section
             SosButtonSection(
                 isSosPressed = isSosPressed,
                 pulseAnimation = pulseAnimation,
                 onSosPress = {
                     isSosPressed = true
                     showAlertDialog = true
-                    // Send SOS to ALL emergency contacts including 999 and user-added ones
                     contacts.forEach { contact ->
                         onSendSms(contact.phone, emergencyMessage)
                     }
@@ -153,23 +190,31 @@ fun EmergencyScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Alert Status Card
             EnhancedAlertStatusCard(
                 fireAlert = fireAlert,
                 gasAlert = gasAlert,
                 onFireChange = {
                     fireAlert = it
+                    LogHelper.addEmergencyLog("fire", it)
+                    coroutineScope.launch {
+                        saveEmergencyNotification("fire", it)
+                    }
                     if (it) showFeedback("⚠️ Fire Alert Activated!")
+                    else showFeedback("✓ Fire Alert Deactivated")
                 },
                 onGasChange = {
                     gasAlert = it
+                    LogHelper.addEmergencyLog("gas", it)
+                    coroutineScope.launch {
+                        saveEmergencyNotification("gas", it)
+                    }
                     if (it) showFeedback("⚠️ Gas Leak Alert Activated!")
+                    else showFeedback("✓ Gas Leak Alert Deactivated")
                 }
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Live Location Card - opens Google Maps
             EnhancedLocationCard(
                 latitude = latitude,
                 longitude = longitude,
@@ -178,7 +223,6 @@ fun EmergencyScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Emergency Contacts Section
             EnhancedContactListCard(
                 contacts = contacts,
                 onAddClick = {
@@ -186,7 +230,6 @@ fun EmergencyScreen(
                     showAddDialog = true
                 },
                 onEditClick = { index ->
-                    // Prevent editing of mandatory 999 contact
                     if (!contacts[index].isEmergencyNumber) {
                         editIndex = index
                         showAddDialog = true
@@ -203,7 +246,6 @@ fun EmergencyScreen(
                     showFeedback("📞 Calling ${contact.name}...")
                 },
                 onDeleteClick = { index ->
-                    // Prevent deletion of mandatory 999 contact
                     if (!contacts[index].isEmergencyNumber) {
                         contacts = contacts.toMutableList().apply { removeAt(index) }
                         showFeedback("✓ Contact deleted")
@@ -216,7 +258,6 @@ fun EmergencyScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        // Alert Dialog
         if (showAlertDialog) {
             EmergencyAlertDialog(
                 onDismiss = {
@@ -226,7 +267,6 @@ fun EmergencyScreen(
             )
         }
 
-        // Add/Edit Contact Dialog
         if (showAddDialog) {
             AddEditContactDialog(
                 oldContact = editIndex?.let { contacts[it] },
@@ -245,7 +285,6 @@ fun EmergencyScreen(
             )
         }
 
-        // Success Toast
         if (showSuccessToast) {
             CustomToast(message = toastMessage)
         }
@@ -322,7 +361,6 @@ fun SosButtonSection(
                 .scale(if (pulseAnimation) 1.05f else 1f),
             contentAlignment = Alignment.Center
         ) {
-            // Pulse rings
             if (pulseAnimation) {
                 Box(
                     modifier = Modifier
